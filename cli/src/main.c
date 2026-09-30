@@ -7,6 +7,8 @@ static int do_base58(const char *);
 static int do_pubkey(const char *);
 static int do_addr  (const char *);
 
+static void print_usage(FILE *);
+
 static const struct command_type {
     const char *name;
     int (*fun) (const char *);
@@ -21,16 +23,38 @@ static constexpr size_t COMMAND_COUNT = (
     sizeof(command_table)/sizeof(command_table[0])
 );
 
-int main(int argc, char *argv[]) {
-    if (argc < 2) {
-        fprintf(stderr, "usage:  %s %s %s\n", argv[0], "command", "[args]");
-        do_help("");
+struct {
+    char **argv;
+    int argc;
+} global;
 
-        return EXIT_FAILURE;
+int main(int argc, char *argv[]) {
+    global.argv = argv;
+    global.argc = argc;
+
+    int opt;
+
+    while ((opt = getopt(argc, argv, "h")) != -1) {
+        switch (opt) {
+            case 'h': {
+                print_usage(stdout);
+                return EXIT_SUCCESS;
+            }
+            default: {
+                print_usage(stderr);
+                return EXIT_FAILURE;
+            }
+        }
     }
 
-    const char *command = argv[1];
-    const char *argument = argc == 2 ? "" : argv[2];
+    const char *command = optind < argc ? argv[optind++] : nullptr;
+    const char *argument = optind < argc ? argv[optind] : "-";
+
+    if (!command) {
+        fprintf(stderr, "error: %s\n", "expected command name");
+        print_usage(stderr);
+        return EXIT_FAILURE;
+    }
 
     for (size_t i=0; i<COMMAND_COUNT; ++i) {
         if (strcasecmp(command, command_table[i].name)) {
@@ -46,11 +70,7 @@ int main(int argc, char *argv[]) {
 }
 
 static int do_help(const char *argument) {
-    printf("%s", "commands:\n");
-
-    for (size_t i=0; i<COMMAND_COUNT; ++i) {
-        printf("    %s\n", command_table[i].name);
-    }
+    print_usage(stdout);
 
     return EXIT_SUCCESS;
 }
@@ -112,4 +132,24 @@ static int do_addr(const char *argument) {
     printf("%s\n", addr.base58);
 
     return EXIT_SUCCESS;
+}
+
+static void print_usage(FILE *fp) {
+    fprintf(
+        fp,
+        "usage:  %s %s %s %s\n"
+        "\n"
+        "With no ARGUMENT, or when ARGUMENT is @-, read standard input.\n"
+        "If ARGUMENT begins with @, then treat it as a file path and read it.\n"
+        "\n"
+        "Available options:\n"
+        "  -h                    display this help and exit\n",
+        global.argv[0], "[OPTION]...", "<COMMAND>", "[ARGUMENT]"
+    );
+
+    fprintf(fp, "%s", "\nAvailable commands:\n");
+
+    for (size_t i=0; i<COMMAND_COUNT; ++i) {
+        fprintf(fp, "    %s\n", command_table[i].name);
+    }
 }
