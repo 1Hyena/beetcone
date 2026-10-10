@@ -20,12 +20,15 @@ static int do_help  (const struct argument_type **, size_t);
 static int do_base58(const struct argument_type **, size_t);
 static int do_pubkey(const struct argument_type **, size_t);
 static int do_addr  (const struct argument_type **, size_t);
+static int do_echo  (const struct argument_type **, size_t);
 
 static void print_usage(FILE *);
 static struct argument_type *new_argument(struct argument_type **list);
 static size_t reverse_arguments(struct argument_type **list);
 static int cleanup(int exit_code);
 static struct clip_type *argument_to_clip(const struct argument_type *);
+static struct clip_type *file_to_clip(const char *fpath);
+static struct clip_type *hex_to_clip(const char *str, size_t len);
 
 static const struct command_type {
     const char *name;
@@ -34,7 +37,8 @@ static const struct command_type {
     { .name = "help",   .fun    = do_help   },
     { .name = "base58", .fun    = do_base58 },
     { .name = "pubkey", .fun    = do_pubkey },
-    { .name = "addr",   .fun    = do_addr   }
+    { .name = "addr",   .fun    = do_addr   },
+    { .name = "echo",   .fun    = do_echo   }
 };
 
 static constexpr size_t COMMAND_COUNT = (
@@ -115,8 +119,9 @@ int main(int main_argc, char *main_argv[]) {
                     &global.heap.arguments
                 );
 
-                arg->cstr = "@-";
+                arg->cstr = "-";
                 arg->bitset.hex = flg_hex;
+                arg->bitset.file = true;
             }
 
             break;
@@ -125,6 +130,11 @@ int main(int main_argc, char *main_argv[]) {
         struct argument_type *arg = new_argument(&global.heap.arguments);
         arg->cstr = argv[optind];
         arg->bitset.hex = flg_hex;
+
+        if (arg->cstr[0] == '@') {
+            arg->cstr++;
+            arg->bitset.file = true;
+        }
 
         skip_args += optind;
         optind = 1;
@@ -144,6 +154,10 @@ int main(int main_argc, char *main_argv[]) {
     }
 
     struct clip_type *command = argument_to_clip(arguments[0]);
+
+    if (!command) {
+        return cleanup(EXIT_FAILURE);
+    }
 
     for (size_t i=0; i<COMMAND_COUNT; ++i) {
         if (strncasecmp(command->data, command_table[i].name, command->size)) {
@@ -176,6 +190,11 @@ static int do_base58(const struct argument_type **args, size_t argc) {
     }
 
     struct clip_type *arg_clip = argument_to_clip(args[0]);
+
+    if (!arg_clip) {
+        return EXIT_FAILURE;
+    }
+
     const char *argument = clip_c_str(arg_clip);
 
     size_t bufsz = beetcone_base58_estimate_strlen(
@@ -191,6 +210,25 @@ static int do_base58(const struct argument_type **args, size_t argc) {
     return EXIT_SUCCESS;
 }
 
+static int do_echo(const struct argument_type **args, size_t argc) {
+    if (argc < 1) {
+        fprintf(stderr, "echo: %s\n", "not enough arguments provided");
+        return EXIT_FAILURE;
+    }
+
+    struct clip_type *arg_clip = argument_to_clip(args[0]);
+
+    if (!arg_clip) {
+        return EXIT_FAILURE;
+    }
+
+    const char *argument = clip_c_str(arg_clip);
+
+    printf("%s\n", argument);
+
+    return EXIT_SUCCESS;
+}
+
 static int do_pubkey(const struct argument_type **args, size_t argc) {
     if (argc < 1) {
         fprintf(stderr, "pubkey: %s\n", "not enough arguments provided");
@@ -198,6 +236,11 @@ static int do_pubkey(const struct argument_type **args, size_t argc) {
     }
 
     struct clip_type *arg_clip = argument_to_clip(args[0]);
+
+    if (!arg_clip) {
+        return EXIT_FAILURE;
+    }
+
     const char *argument = clip_c_str(arg_clip);
     auto key = beetcone_make_key(argument, strlen(argument));
 
@@ -229,6 +272,11 @@ static int do_addr(const struct argument_type **args, size_t argc) {
     }
 
     struct clip_type *arg_clip = argument_to_clip(args[0]);
+
+    if (!arg_clip) {
+        return EXIT_FAILURE;
+    }
+
     const char *argument = clip_c_str(arg_clip);
     auto key = beetcone_make_key(argument, strlen(argument));
 
@@ -340,9 +388,131 @@ static size_t reverse_arguments(struct argument_type **list) {
 }
 
 static struct clip_type *argument_to_clip(const struct argument_type *arg) {
+    if (arg->bitset.file) {
+        struct clip_type *file_clip = file_to_clip(arg->cstr);
+
+        if (!file_clip) {
+            return nullptr;
+        }
+
+        if (arg->bitset.hex) {
+            struct clip_type *clip = hex_to_clip(
+                file_clip->data, file_clip->size
+            );
+
+            clip_from_list(file_clip, &global.heap.clips);
+            free_clip(file_clip);
+
+            return clip;
+        }
+
+        return file_clip;
+    }
+
+    if (arg->bitset.hex) {
+        return hex_to_clip(arg->cstr, strlen(arg->cstr));
+    }
+
     struct clip_type *clip = new_clip(&global.heap.clips);
 
-    clip_set_data(clip, arg->cstr, strlen(arg->cstr) + 1);
+    if (clip) {
+        clip_set_data(clip, arg->cstr, strlen(arg->cstr));
+    }
+
+    return clip;
+}
+
+static struct clip_type *file_to_clip(const char *fpath) {
+    size_t fsz = 0;
+    char *data = read_file_to_memory(fpath, &fsz);
+
+    if (!data) {
+        return nullptr;
+    }
+
+    struct clip_type *clip = new_clip(&global.heap.clips);
+
+    if (!clip) {
+        free(data);
+        return nullptr;
+    }
+
+    clip->data = data;
+    clip->size = fsz;
+
+    return clip;
+}
+
+static struct clip_type *hex_to_clip(const char *str, size_t len) {
+    size_t count = 0;
+
+    for (size_t i=0; i<len; ++i) {
+        char c = str[i];
+
+        if ((c >= '0' && c <= '9')
+        ||  (c >= 'A' && c <= 'F')
+        ||  (c >= 'a' && c <= 'f')) {
+            ++count;
+        }
+    }
+
+    size_t size = count / 2;
+
+    struct clip_type *clip = new_clip(&global.heap.clips);
+
+    if (!clip) {
+        return nullptr;
+    }
+
+    if (!clip_reserve(clip, size)) {
+        clip_from_list(clip, &global.heap.clips);
+        free_clip(clip);
+        return nullptr;
+    }
+
+    char prev_c = 0;
+    count = 0;
+
+    for (size_t i=0; i<len; ++i) {
+        char next_c = str[i];
+
+        if ((next_c >= '0' && next_c <= '9')
+        ||  (next_c >= 'A' && next_c <= 'F')
+        ||  (next_c >= 'a' && next_c <= 'f')) {
+            ++count;
+
+            if (count % 2) {
+                prev_c = next_c;
+                continue;
+            }
+
+            int prev_val = 0;
+            int next_val = 0;
+
+            if (prev_c >= '0' && prev_c <= '9') {
+                prev_val = prev_c - 48;
+            }
+            else if (prev_c >= 'a' && prev_c <= 'f') {
+                prev_val = prev_c - 97 + 10;
+            }
+            else if (prev_c >= 'A' && prev_c <= 'F') {
+                prev_val = prev_c - 65 + 10;
+            }
+
+            if (next_c >= '0' && next_c <= '9') {
+                next_val = next_c - 48;
+            }
+            else if (next_c >= 'a' && next_c <= 'f') {
+                next_val = next_c - 97 + 10;
+            }
+            else if (next_c >= 'A' && next_c <= 'F') {
+                next_val = next_c - 65 + 10;
+            }
+
+            int val = prev_val * 16 + next_val;
+            ((uint8_t *) clip->data)[(count - 1)/2] = (uint8_t) val;
+        }
+    }
 
     return clip;
 }

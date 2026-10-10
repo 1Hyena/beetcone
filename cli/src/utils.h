@@ -32,12 +32,27 @@ static void *clip_set_data(
     size_t                                  size
 );
 
+static void *clip_reserve(
+    struct clip_type *                      clip,
+    size_t                                  size
+);
+
 static struct clip_type *new_clip(
     struct clip_type **                     list
 );
 
 static void free_clip(
     struct clip_type *                      clip
+);
+
+static void clip_from_list(
+    struct clip_type *                      clip,
+    struct clip_type **                     list
+);
+
+static char *read_file_to_memory(
+    const char *                            filename,
+    size_t *                                filesize
 );
 ////////////////////////////////////////////////////////////////////////////////
 
@@ -104,17 +119,109 @@ static void *clip_set_data(
         free(clip->data);
     }
 
-    clip->data = malloc(size * sizeof(uint8_t));
+    size_t real_size = size + 1;
+
+    clip->data = malloc(real_size * sizeof(uint8_t));
 
     if (clip->data) {
         clip->size = size;
         memcpy(clip->data, data, size);
+        ((char *) clip->data)[size] = '\0';
     }
     else {
         clip->size = 0;
     }
 
     return clip->data;
+}
+
+static void *clip_reserve(
+    struct clip_type *clip, size_t size
+) {
+    if (clip->data) {
+        free(clip->data);
+    }
+
+    size_t real_size = size + 1;
+
+    clip->data = calloc(real_size, sizeof(uint8_t));
+
+    if (clip->data) {
+        clip->size = size;
+    }
+    else {
+        clip->size = 0;
+    }
+
+    return clip->data;
+}
+
+static inline char* read_file_to_memory(
+    const char *filename, size_t *filesize
+) {
+    // Reads a file into a memory buffer. Sets filesize to bytes read.
+    // Returns a pointer to the buffer (caller must free), or NULL on error.
+
+    if (filesize) {
+        *filesize = 0;
+    }
+
+    FILE *f = fopen(filename, "rb");
+
+    if (!f) {
+        return nullptr;
+    }
+
+    // Get file size
+    fseek(f, 0, SEEK_END);
+    long length = ftell(f);
+    fseek(f, 0, SEEK_SET);
+
+    if (length < 0) {
+        fclose(f);
+        return nullptr;
+    }
+
+    // Allocate memory
+    const size_t bufsz = (size_t) (length + 1);
+    char *buffer = malloc(bufsz);
+
+    if (!buffer) {
+        fclose(f);
+        return nullptr;
+    }
+
+    // Read content
+    size_t read_size = fread(buffer, 1, bufsz, f);
+    buffer[read_size] = '\0'; // Null-terminate
+    fclose(f);
+
+    if (filesize) {
+        *filesize = read_size;
+    }
+
+    if (read_size + 1 != bufsz) {
+        free(buffer);
+        return nullptr;
+    }
+
+    return buffer;
+}
+
+static void clip_from_list(struct clip_type *clip, struct clip_type **list) {
+    if (*list == clip) {
+        *list = clip->next;
+        clip->next = nullptr;
+        return;
+    }
+
+    for (struct clip_type *c = *list; c; c = c->next) {
+        if (c->next == clip) {
+            c->next = clip->next;
+            clip->next = nullptr;
+            return;
+        }
+    }
 }
 
 #endif
