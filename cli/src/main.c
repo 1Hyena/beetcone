@@ -195,15 +195,13 @@ static int do_base58(const struct argument_type **args, size_t argc) {
         return EXIT_FAILURE;
     }
 
-    const char *argument = clip_c_str(arg_clip);
-
     size_t bufsz = beetcone_base58_estimate_strlen(
-        argument, strlen(argument)
+        arg_clip->data, arg_clip->size
     ) + 1;
 
     char buf[bufsz];
 
-    beetcone_base58_encode(argument, strlen(argument), buf, bufsz);
+    beetcone_base58_encode(arg_clip->data, arg_clip->size, buf, bufsz);
 
     printf("%s\n", buf);
 
@@ -222,9 +220,10 @@ static int do_echo(const struct argument_type **args, size_t argc) {
         return EXIT_FAILURE;
     }
 
-    const char *argument = clip_c_str(arg_clip);
-
-    printf("%s\n", argument);
+    [[maybe_unused]] ssize_t bytes_written = write(
+        // TODO: do it properly (add error handling)
+        STDOUT_FILENO, arg_clip->data, arg_clip->size
+    );
 
     return EXIT_SUCCESS;
 }
@@ -241,18 +240,17 @@ static int do_pubkey(const struct argument_type **args, size_t argc) {
         return EXIT_FAILURE;
     }
 
-    const char *argument = clip_c_str(arg_clip);
-    auto key = beetcone_make_key(argument, strlen(argument));
+    auto key = beetcone_make_key(arg_clip->data, arg_clip->size);
 
     if (!key.bitset.valid) {
-        fprintf(stderr, "invalid argument: %s\n", argument);
+        fprintf(stderr, "invalid argument %d\n", 1);
         return EXIT_FAILURE;
     }
 
     auto pubkey = beetcone_key2pubkey(key);
 
     if (!pubkey.bitset.valid) {
-        fprintf(stderr, "invalid argument: %s\n", argument);
+        fprintf(stderr, "invalid argument %d\n", 1);
         return EXIT_FAILURE;
     }
 
@@ -277,18 +275,17 @@ static int do_addr(const struct argument_type **args, size_t argc) {
         return EXIT_FAILURE;
     }
 
-    const char *argument = clip_c_str(arg_clip);
-    auto key = beetcone_make_key(argument, strlen(argument));
+    auto key = beetcone_make_key(arg_clip->data, arg_clip->size);
 
     if (!key.bitset.valid) {
-        fprintf(stderr, "invalid argument: %s\n", argument);
+        fprintf(stderr, "invalid argument %d\n", 1);
         return EXIT_FAILURE;
     }
 
     auto addr = beetcone_key2addr(key);
 
     if (!addr.bitset.valid) {
-        fprintf(stderr, "invalid argument: %s\n", argument);
+        fprintf(stderr, "invalid argument %d\n", 1);
         return EXIT_FAILURE;
     }
 
@@ -423,8 +420,20 @@ static struct clip_type *argument_to_clip(const struct argument_type *arg) {
 }
 
 static struct clip_type *file_to_clip(const char *fpath) {
+    FILE *fp = strcmp(fpath, "-") ? fopen(fpath, "rb") : stdin;
     size_t fsz = 0;
-    char *data = read_file_to_memory(fpath, &fsz);
+    char *data = nullptr;
+
+    if (fp) {
+        auto result = file_to_memory(fp);
+
+        fsz = result.size;
+        data = result.data;
+
+        if (fp != stdin) {
+            fclose(fp);
+        }
+    }
 
     if (!data) {
         return nullptr;

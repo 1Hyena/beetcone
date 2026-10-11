@@ -49,11 +49,6 @@ static void clip_from_list(
     struct clip_type *                      clip,
     struct clip_type **                     list
 );
-
-static char *read_file_to_memory(
-    const char *                            filename,
-    size_t *                                filesize
-);
 ////////////////////////////////////////////////////////////////////////////////
 
 static inline ssize_t beetcone_stdout(
@@ -156,56 +151,53 @@ static void *clip_reserve(
     return clip->data;
 }
 
-static inline char* read_file_to_memory(
-    const char *filename, size_t *filesize
-) {
-    // Reads a file into a memory buffer. Sets filesize to bytes read.
-    // Returns a pointer to the buffer (caller must free), or NULL on error.
+static inline struct {
+    char *data;
+    size_t size;
+} file_to_memory(FILE *fp) {
+    static constexpr size_t INITIAL_BUFFER_CAPACITY = 512;
+    size_t data_size = 0, data_capacity = INITIAL_BUFFER_CAPACITY;
+    char *data = nullptr;
+    typeof(file_to_memory(nullptr)) blob = {};
 
-    if (filesize) {
-        *filesize = 0;
+    if (fp == nullptr) {
+        const char *error_message = "fopen: error opening file\n";
+        [[maybe_unused]] ssize_t bytes_written = write(
+            2, error_message, strlen(error_message)
+        );
+
+        return blob;
     }
 
-    FILE *f = fopen(filename, "rb");
+    for (;;) {
+        size_t bytes_read, bytes_to_read;
 
-    if (!f) {
-        return nullptr;
+        data = realloc(data, data_capacity);
+
+        if (data == nullptr) {
+            const char *error_message = "realloc: memory allocation failed\n";
+            [[maybe_unused]] ssize_t bytes_written = write(
+                2, error_message, strlen(error_message)
+            );
+
+            return blob;
+        }
+
+        bytes_to_read = data_capacity - data_size;
+        bytes_read = fread(data + data_size, 1, bytes_to_read, fp);
+        data_size += bytes_read;
+
+        if (bytes_read != bytes_to_read) {
+            break;
+        }
+
+        data_capacity *= 2;
     }
 
-    // Get file size
-    fseek(f, 0, SEEK_END);
-    long length = ftell(f);
-    fseek(f, 0, SEEK_SET);
+    blob.data = data;
+    blob.size = data_size;
 
-    if (length < 0) {
-        fclose(f);
-        return nullptr;
-    }
-
-    // Allocate memory
-    const size_t bufsz = (size_t) (length + 1);
-    char *buffer = malloc(bufsz);
-
-    if (!buffer) {
-        fclose(f);
-        return nullptr;
-    }
-
-    // Read content
-    size_t read_size = fread(buffer, 1, bufsz, f);
-    buffer[read_size] = '\0'; // Null-terminate
-    fclose(f);
-
-    if (filesize) {
-        *filesize = read_size;
-    }
-
-    if (read_size + 1 != bufsz) {
-        free(buffer);
-        return nullptr;
-    }
-
-    return buffer;
+    return blob;
 }
 
 static void clip_from_list(struct clip_type *clip, struct clip_type **list) {
