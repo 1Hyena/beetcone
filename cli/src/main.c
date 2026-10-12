@@ -21,6 +21,7 @@ static int do_base58(const struct argument_type **, size_t);
 static int do_pubkey(const struct argument_type **, size_t);
 static int do_addr  (const struct argument_type **, size_t);
 static int do_echo  (const struct argument_type **, size_t);
+static int do_wif   (const struct argument_type **, size_t);
 
 static void print_usage(FILE *);
 static struct argument_type *new_argument(struct argument_type **list);
@@ -38,6 +39,7 @@ static const struct command_type {
     { .name = "base58", .fun    = do_base58 },
     { .name = "pubkey", .fun    = do_pubkey },
     { .name = "addr",   .fun    = do_addr   },
+    { .name = "wif",    .fun    = do_wif    },
     { .name = "echo",   .fun    = do_echo   }
 };
 
@@ -185,7 +187,7 @@ static int do_help(const struct argument_type **args, size_t argc) {
 
 static int do_base58(const struct argument_type **args, size_t argc) {
     if (argc < 1) {
-        fprintf(stderr, "base58: %s\n", "not enough arguments provided");
+        fprintf(stderr, "base58: %s\n", "data argument required");
         return EXIT_FAILURE;
     }
 
@@ -210,7 +212,7 @@ static int do_base58(const struct argument_type **args, size_t argc) {
 
 static int do_echo(const struct argument_type **args, size_t argc) {
     if (argc < 1) {
-        fprintf(stderr, "echo: %s\n", "not enough arguments provided");
+        fprintf(stderr, "echo: %s\n", "argument required");
         return EXIT_FAILURE;
     }
 
@@ -230,7 +232,7 @@ static int do_echo(const struct argument_type **args, size_t argc) {
 
 static int do_pubkey(const struct argument_type **args, size_t argc) {
     if (argc < 1) {
-        fprintf(stderr, "pubkey: %s\n", "not enough arguments provided");
+        fprintf(stderr, "pubkey: %s\n", "private key required");
         return EXIT_FAILURE;
     }
 
@@ -243,14 +245,14 @@ static int do_pubkey(const struct argument_type **args, size_t argc) {
     auto key = beetcone_make_key(arg_clip->data, arg_clip->size);
 
     if (!key.bitset.valid) {
-        fprintf(stderr, "invalid argument %d\n", 1);
+        fprintf(stderr, "%s\n", "invalid private key provided");
         return EXIT_FAILURE;
     }
 
-    auto pubkey = beetcone_key2pubkey(key);
+    auto pubkey = beetcone_prvkey2pubkey(key);
 
     if (!pubkey.bitset.valid) {
-        fprintf(stderr, "invalid argument %d\n", 1);
+        fprintf(stderr, "%s\n", "invalid private key provided");
         return EXIT_FAILURE;
     }
 
@@ -265,7 +267,7 @@ static int do_pubkey(const struct argument_type **args, size_t argc) {
 
 static int do_addr(const struct argument_type **args, size_t argc) {
     if (argc < 1) {
-        fprintf(stderr, "addr: %s\n", "not enough arguments provided");
+        fprintf(stderr, "addr: %s\n", "private key required");
         return EXIT_FAILURE;
     }
 
@@ -278,18 +280,49 @@ static int do_addr(const struct argument_type **args, size_t argc) {
     auto key = beetcone_make_key(arg_clip->data, arg_clip->size);
 
     if (!key.bitset.valid) {
-        fprintf(stderr, "invalid argument %d\n", 1);
+        fprintf(stderr, "%s\n", "invalid private key provided");
         return EXIT_FAILURE;
     }
 
-    auto addr = beetcone_key2addr(key);
+    auto addr = beetcone_prvkey2addr(key);
 
     if (!addr.bitset.valid) {
-        fprintf(stderr, "invalid argument %d\n", 1);
+        fprintf(stderr, "%s\n", "invalid private key provided");
         return EXIT_FAILURE;
     }
 
     printf("%s\n", addr.base58);
+
+    return EXIT_SUCCESS;
+}
+
+static int do_wif(const struct argument_type **args, size_t argc) {
+    if (argc < 1) {
+        fprintf(stderr, "wif: %s\n", "private key needed");
+        return EXIT_FAILURE;
+    }
+
+    struct clip_type *arg_clip = argument_to_clip(args[0]);
+
+    if (!arg_clip) {
+        return EXIT_FAILURE;
+    }
+
+    auto key = beetcone_make_key(arg_clip->data, arg_clip->size);
+
+    if (!key.bitset.valid) {
+        fprintf(stderr, "%s\n", "invalid private key provided");
+        return EXIT_FAILURE;
+    }
+
+    auto wif = beetcone_prvkey2wif(key);
+
+    if (!wif.bitset.valid) {
+        fprintf(stderr, "%s\n", "invalid private key provided");
+        return EXIT_FAILURE;
+    }
+
+    printf("%s\n", wif.base58);
 
     return EXIT_SUCCESS;
 }

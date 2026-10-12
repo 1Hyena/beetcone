@@ -35,12 +35,13 @@
 #define BEETCONE_REVISION       0
 #define BEETCONE_VERSION        "1.0.0"
 
-struct beetcone_key_type;
+struct beetcone_prvkey_type;
 struct beetcone_addr_type;
 
-static constexpr size_t BEETCONE_KEY_SZ     = 32;
+static constexpr size_t BEETCONE_PRVKEY_SZ  = 32;
 static constexpr size_t BEETCONE_PUBKEY_SZ  = 65;
-static constexpr size_t BEETCONE_ADDR_SZ    = 50;
+static constexpr size_t BEETCONE_ADDR_SZ    = 35;
+static constexpr size_t BEETCONE_WIF_SZ     = 52;
 
 static const char beetcone_base58_table[] = {
     '1', '2', '3', '4', '5', '6', '7', '8', '9', 'A', 'B', 'C', 'D', 'E', 'F',
@@ -49,8 +50,8 @@ static const char beetcone_base58_table[] = {
     'n', 'o', 'p', 'q', 'r', 's', 't', 'u', 'v', 'w', 'x', 'y', 'z'
 };
 
-struct beetcone_key_type {
-    uint8_t data[BEETCONE_KEY_SZ];
+struct beetcone_prvkey_type {
+    uint8_t data[BEETCONE_PRVKEY_SZ];
 
     struct {
         bool valid:1;
@@ -73,17 +74,29 @@ struct beetcone_addr_type {
     } bitset;
 };
 
+struct beetcone_wif_type {
+    char base58[BEETCONE_WIF_SZ];
+
+    struct {
+        bool valid:1;
+    } bitset;
+};
+
 // Public API: /////////////////////////////////////////////////////////////////
 static struct beetcone_addr_type    beetcone_pubkey2addr(
     struct beetcone_pubkey_type         pubkey
 );
 
-static struct beetcone_pubkey_type  beetcone_key2pubkey(
-    struct beetcone_key_type            key
+static struct beetcone_pubkey_type  beetcone_prvkey2pubkey(
+    struct beetcone_prvkey_type         key
 );
 
-static struct beetcone_addr_type    beetcone_key2addr(
-    struct beetcone_key_type            key
+static struct beetcone_addr_type    beetcone_prvkey2addr(
+    struct beetcone_prvkey_type         key
+);
+
+static struct beetcone_wif_type     beetcone_prvkey2wif(
+    struct beetcone_prvkey_type         key
 );
 
 static size_t                       beetcone_base58_estimate_strlen(
@@ -91,7 +104,7 @@ static size_t                       beetcone_base58_estimate_strlen(
     size_t                              size
 );
 
-static struct beetcone_key_type     beetcone_make_key(
+static struct beetcone_prvkey_type  beetcone_make_key(
     const void *                        data,
     size_t                              size
 );
@@ -110,10 +123,10 @@ static size_t beetcone_leading_zeros(
 );
 ////////////////////////////////////////////////////////////////////////////////
 
-static inline struct beetcone_key_type beetcone_make_key(
+static inline struct beetcone_prvkey_type beetcone_make_key(
     const void *data, size_t size
 ) {
-    struct beetcone_key_type key = {};
+    struct beetcone_prvkey_type key = {};
 
     if (data && size == 32) {
         bool all_zeros = true;
@@ -242,14 +255,66 @@ static inline size_t beetcone_base58_encode(
     );
 }
 
-static inline struct beetcone_addr_type beetcone_key2addr(
-    struct beetcone_key_type key
+static inline struct beetcone_addr_type beetcone_prvkey2addr(
+    struct beetcone_prvkey_type key
 ) {
-    return beetcone_pubkey2addr(beetcone_key2pubkey(key));
+    return beetcone_pubkey2addr(beetcone_prvkey2pubkey(key));
 }
 
-static inline struct beetcone_pubkey_type beetcone_key2pubkey(
-    struct beetcone_key_type key
+static inline struct beetcone_wif_type beetcone_prvkey2wif(
+    struct beetcone_prvkey_type prvkey
+) {
+    const struct beetcone_wif_type error = {
+        .bitset = {
+            .valid = false
+        }
+    };
+
+    if (!prvkey.bitset.valid) {
+        return error;
+    }
+
+    uint8_t binwif[1 + sizeof(prvkey.data) + 4] = { 0x80 };
+
+    memcpy(binwif + 1, prvkey.data, sizeof(prvkey.data));
+
+    uint8_t sha256_res_1[32];
+    unsigned int sha256_len_1 = 0;
+
+    EVP_Digest(
+        binwif, 1 + sizeof(prvkey.data), sha256_res_1, &sha256_len_1,
+        EVP_sha256(), nullptr
+    );
+
+    uint8_t sha256_res_2[32];
+    unsigned int sha256_len_2 = 0;
+
+    EVP_Digest(
+        sha256_res_1, sha256_len_1, sha256_res_2, &sha256_len_2,
+        EVP_sha256(), nullptr
+    );
+
+    memcpy(binwif + 1 + sizeof(prvkey.data), sha256_res_2, 4);
+
+    struct beetcone_wif_type wif = {
+        .bitset = {
+            .valid = true
+        }
+    };
+
+    auto ret = beetcone_base58_encode(
+        binwif, sizeof(binwif), wif.base58, sizeof(wif.base58)
+    );
+
+    if (ret >= sizeof(wif.base58)) {
+        return error;
+    }
+
+    return wif;
+}
+
+static inline struct beetcone_pubkey_type beetcone_prvkey2pubkey(
+    struct beetcone_prvkey_type key
 ) {
     const struct beetcone_pubkey_type error = {
         .bitset = {
@@ -324,7 +389,7 @@ static inline struct beetcone_addr_type beetcone_pubkey2addr(
         return error;
     }
 
-    unsigned char sha256_res[32];
+    uint8_t sha256_res[32];
     unsigned int sha256_len = 0;
 
     EVP_Digest(
@@ -332,7 +397,7 @@ static inline struct beetcone_addr_type beetcone_pubkey2addr(
         nullptr
     );
 
-    unsigned char ripemd160_res[20];
+    uint8_t ripemd160_res[20];
     unsigned int ripemd_len = 0;
 
     EVP_Digest(
@@ -340,13 +405,13 @@ static inline struct beetcone_addr_type beetcone_pubkey2addr(
         nullptr
     );
 
-    unsigned char address_payload[25];
+    uint8_t address_payload[25];
     address_payload[0] = 0x00; // Mainnet network byte
     memcpy(&address_payload[1], ripemd160_res, 20);
 
     // Double SHA-256 for Checksum computation
-    unsigned char check_sha1[32];
-    unsigned char check_sha2[32];
+    uint8_t check_sha1[32];
+    uint8_t check_sha2[32];
 
     EVP_Digest(
         address_payload, 21, check_sha1, &sha256_len, EVP_sha256(), nullptr
@@ -365,7 +430,8 @@ static inline struct beetcone_addr_type beetcone_pubkey2addr(
     };
 
     auto ret = beetcone_base58_encode(
-        address_payload, 25, addr.base58, sizeof(addr.base58)
+        address_payload, sizeof(address_payload),
+        addr.base58, sizeof(addr.base58)
     );
 
     if (ret >= sizeof(addr.base58)) {
